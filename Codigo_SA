@@ -1,0 +1,285 @@
+//CODIGO DO ARDONINO 1
+#include <Adafruit_LiquidCrystal.h>
+
+// Pinos dos sensores ultrassônicos e botões
+Adafruit_LiquidCrystal lcd(0);
+const int echoPin1 = 6, trigPin1 = 7, echoPin2 = 8, trigPin2 = 9;
+const int botaoMostrarPassageiros = 10;
+const int botaoMeiaEntrada = 11;
+const int botaoNaoPagante = 12;
+const int botaoFinalizarExpediente = 13;
+
+// Variáveis globais
+long duration1, duration2;
+int distance1, distance2;
+int countEntrada = 0, contdia = 0, passageirosPerdidos = 0, meiaEntrada = 0, naoPagantes = 0;
+const int LIMITE_MAXIMO = 10;
+
+// Variáveis de controle de detecção e botão
+// 0 = Tela padrão, 1 = Perdidos, 2 = Total, 3 = Arrecadado, 4 = Perdido, 5 = Meia
+bool sensor1Detected = false, sensor2Detected = false;
+bool lastButtonState = HIGH, currentButtonState = HIGH;
+bool lastEndButtonState = HIGH, currentEndButtonState = HIGH;
+int estadoTela = 0;
+bool telaAtualizada = true, expedienteFinalizado = false;
+
+int valorArrecadado = 0;
+int valorPerdido = 0;
+float valorMeiaEntradaArrecadado = 0.0;
+
+void setup() {
+// Inicializacao  
+  lcd.begin(16, 2);
+  Serial.begin(9600);
+
+// Define os pinos
+  pinMode(trigPin1, OUTPUT);
+  pinMode(trigPin2, OUTPUT);
+  pinMode(echoPin1, INPUT);
+  pinMode(echoPin2, INPUT);
+  pinMode(botaoMostrarPassageiros, INPUT_PULLUP);
+  pinMode(botaoMeiaEntrada, INPUT_PULLUP);
+  pinMode(botaoNaoPagante, INPUT_PULLUP);
+  pinMode(botaoFinalizarExpediente, INPUT_PULLUP);
+}
+
+void loop() {
+// Leitura do estado dos botões
+  currentButtonState = digitalRead(botaoMostrarPassageiros);
+  currentEndButtonState = digitalRead(botaoFinalizarExpediente);
+
+  if (lastButtonState == HIGH && currentButtonState == LOW) {
+    // Atualiza a tela quando o botão é pressionado
+    if (!expedienteFinalizado) {
+        // Se o expediente não está finalizado, alterna entre os estados 0, 1 e 2
+        estadoTela++;
+        if (estadoTela > 2) {
+            estadoTela = 0; // Volta ao estado 0 se exceder 2
+        }
+    } else {
+        // Se o expediente está finalizado, alterna entre os estados 3, 4 e 5
+        if (estadoTela == 3) {
+            estadoTela = 4;
+        } else if (estadoTela == 4) {
+            estadoTela = 5;
+        } else {
+            estadoTela = 3;
+        }
+    }
+    telaAtualizada = true;
+    delay(50); // Debounce
+}
+
+// Atualiza o estado do botão
+lastButtonState = currentButtonState;
+
+
+  if (lastEndButtonState == HIGH && currentEndButtonState == LOW) {
+    expedienteFinalizado = !expedienteFinalizado;
+    if (expedienteFinalizado) {
+      estadoTela = 3;
+      valorArrecadado = (contdia - meiaEntrada) * 3;
+      valorPerdido = passageirosPerdidos * 3;
+      valorMeiaEntradaArrecadado = meiaEntrada * 1.5;
+    } else {
+      estadoTela = 0;
+    }
+    telaAtualizada = true;
+    delay(50);
+  }
+  lastEndButtonState = currentEndButtonState;
+
+// Leitura dos sensores
+  distance1 = medirDistancia(trigPin1, echoPin1);
+  distance2 = medirDistancia(trigPin2, echoPin2);
+
+  if (!expedienteFinalizado) {
+    if (distance1 < 200 && distance1 > 0 && !sensor1Detected) {
+      if (countEntrada < LIMITE_MAXIMO) {
+        countEntrada++;
+        contdia++;
+        Serial.print("Pessoa entrou. Contagem: ");
+        Serial.println(countEntrada);
+        sensor1Detected = true;
+        telaAtualizada = true;
+      } else {
+        passageirosPerdidos++;
+        Serial.print("Lotação máxima. Perdidos: ");
+        Serial.println(passageirosPerdidos);
+        sensor1Detected = true;
+        telaAtualizada = true;
+      }
+    } else if (distance1 >= 200) {
+      sensor1Detected = false;
+    }
+    if (distance2 < 200 && distance2 > 0 && !sensor2Detected) {
+      if (countEntrada > 0) {
+        countEntrada--;
+        Serial.print("Pessoa saiu. Contagem: ");
+        Serial.println(countEntrada);
+        sensor2Detected = true;
+        telaAtualizada = true;
+      }
+    } else if (distance2 >= 200) {
+      sensor2Detected = false;
+    }
+  }
+// Verifica o pagamento e atualiza contagem apenas se o sensor detectar uma pessoa
+  if (digitalRead(botaoMeiaEntrada) == LOW) {
+    if (distance1 < 200 && distance1 > 0) {
+      meiaEntrada++;
+      contdia++;
+      Serial.println("Meia entrada paga.");
+      telaAtualizada = true;
+      delay(200);
+    }
+  } else if (digitalRead(botaoNaoPagante) == LOW) {
+    if (distance1 < 200 && distance1 > 0) {
+      naoPagantes++;
+      contdia++;
+      Serial.println("Não pagante registrado.");
+      telaAtualizada = true;
+      delay(200);
+    }
+  }
+// Atualiza a tela com dados
+  if (telaAtualizada) {
+    lcd.clear();
+    switch (estadoTela) {
+      case 0:
+        lcd.setCursor(2, 0);
+        lcd.print("Entrada: ");
+        if (countEntrada < 10) lcd.print("0");
+        lcd.print(countEntrada);
+        lcd.setCursor(0, 1);
+        lcd.print("Meia: ");
+        if (meiaEntrada < 10) lcd.print("0");
+        lcd.print(meiaEntrada);
+        lcd.setCursor(8, 1);
+        lcd.print("NP: ");
+        if (naoPagantes < 10) lcd.print("0");
+        lcd.print(naoPagantes);
+        if (countEntrada >= LIMITE_MAXIMO) {
+          lcd.setCursor(0, 1);
+          lcd.print("Lotacao excedida ");
+        }
+        break;
+      case 1:
+        lcd.setCursor(2, 0);
+        lcd.print("Perdidos: ");
+        if (passageirosPerdidos < 10) lcd.print("0");
+        lcd.print(passageirosPerdidos);
+        lcd.setCursor(0, 1);
+        lcd.print("Pressione p/ voltar");
+        break;
+      case 2:
+        lcd.setCursor(2, 0);
+        lcd.print("Total dia: ");
+        if (contdia < 10) lcd.print("0");
+        lcd.print(contdia);
+        lcd.setCursor(0, 1);
+        lcd.print("Pressione p/ voltar");
+        break;
+      case 3:
+        lcd.setCursor(0, 0);
+        lcd.print("Arrec: R$");
+        if (valorArrecadado < 10) lcd.print("0");
+        lcd.print(valorArrecadado);
+        lcd.setCursor(0, 1);
+        lcd.print("Prox Pg p/ Detalhes");
+        break;
+      case 4:
+        lcd.setCursor(0, 0);
+        lcd.print("Perdido: R$");
+        if (valorPerdido < 10) lcd.print("0");
+        lcd.print(valorPerdido);
+        lcd.setCursor(0, 1);
+        lcd.print("Prox Pg p/ Meia");
+        break;
+      case 5:
+        lcd.setCursor(0, 0);
+        lcd.print("Meia: R$");
+        if (valorMeiaEntradaArrecadado < 10) lcd.print("0");
+        lcd.print(valorMeiaEntradaArrecadado, 1);
+        lcd.setCursor(0, 1);
+        lcd.print("Prox Pg p/ Arrec");
+        break;
+    }
+    telaAtualizada = false;
+  }
+// Envia o valor de contdia para o Arduino receptor
+ 	Serial.print("contdia:");
+  	Serial.println(contdia);
+  	Serial.print("countEntrada:");
+  	Serial.println(countEntrada);
+  	delay(200);
+  
+  }
+	int medirDistancia(int trigPin, int echoPin) {
+  	digitalWrite(trigPin, LOW);
+  	delayMicroseconds(2);
+  	digitalWrite(trigPin, HIGH);
+  	delayMicroseconds(10);
+  	digitalWrite(trigPin, LOW);
+  	long duration = pulseIn(echoPin, HIGH);
+  	return duration * 0.034 / 2;
+  }
+//--------------------------------------------------------------------------------------------------------------------
+//CODIGO DO ARDUINO 2
+
+#include <Adafruit_LiquidCrystal.h>
+Adafruit_LiquidCrystal lcd(0);
+
+// Definições dos pinos dos LEDs
+const int ledVermelho = 2; // LED vermelho
+const int ledAzul = 3;     // LED azul
+const int ledVerde = 4;    // LED verde
+
+void setup() {
+  // Inicialização
+  lcd.begin(16, 2);
+  Serial.begin(9600);
+  
+  pinMode(ledVermelho, OUTPUT);
+  pinMode(ledAzul, OUTPUT);
+  pinMode(ledVerde, OUTPUT);
+
+  lcd.print("Receptor pronto.");
+}
+
+void loop() {
+  // Pegando dados da comunicação serial
+  if (Serial.available()) {
+    String receivedData = Serial.readStringUntil('\n');
+    if (receivedData.startsWith("countEntrada:")) {
+      int countEntrada = receivedData.substring(13).toInt();
+      
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("Entradas:");
+      lcd.setCursor(0, 1);
+      if (countEntrada < 10) {
+        lcd.print("0");  // Adiciona zero à esquerda se necessário
+      }
+      lcd.print(countEntrada);
+      
+      Serial.print("Valor de countEntrada recebido: ");
+      Serial.println(countEntrada);
+      
+      // Controle dos LEDs
+      if (countEntrada > 9) {
+        digitalWrite(ledVermelho, HIGH); 
+        digitalWrite(ledAzul, LOW);      
+        digitalWrite(ledVerde, LOW);     
+      } else if (countEntrada == 7) {
+        digitalWrite(ledVermelho, LOW);  
+        digitalWrite(ledAzul, LOW);      
+        digitalWrite(ledVerde, HIGH);  
+      } else {
+        digitalWrite(ledVermelho, LOW);  
+        digitalWrite(ledAzul, HIGH);  
+        digitalWrite(ledVerde, LOW);    
+      }
+    }
+  }
+}
